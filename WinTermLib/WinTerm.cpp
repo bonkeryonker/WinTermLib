@@ -1,28 +1,44 @@
 #include "WinTerm.h"
 
-//TODO: Reimplement everything from github and push
 //TODO: Additional TODOs in Constructor
 //TODO: Throw errors if setting buffer/window size fails instead of just returning (Also in updateBufferInfo(), and writeCharANSI())
 
 namespace WinTermLib
 {
+	constexpr const char* WinTerm::DefaultWindowTitle;
+
 	/*
 		==PUBLIC METHODS==
 	*/
 
-	WinTerm::WinTerm(short TermSizeX, short TermSizeY, bool matchBufferToWindowSize)
+	WinTerm::WinTerm(short TermSizeX, short TermSizeY, std::string windowTitle, bool matchBufferToWindowSize)
 	{
 		//TODO: See if there's a hacky solution to disallowing user to resize window (AFAIK this is impossible with win32 console APIs as it falls under the purview of the user's terminal emulator)
-		//TODO: Reimplement everything from github and push
-		//TODO: Allow for custom window titles
 		//TODO: Overload constructor to allow for buffers larger than window size (Remove line below this one)
 		matchBufferToWindowSize = true;
 
 		_wHnd = GetStdHandle(STD_OUTPUT_HANDLE);
 		_rHnd = GetStdHandle(STD_INPUT_HANDLE);
 
+		// Save current input mode, to be restored on deconstruction of Winterm
+		if (!GetConsoleMode(_rHnd, &_oldConsoleInputMode))
+		{
+			std::cerr << "GetConsoleMode failed with error: " << GetLastError() << std::endl;
+			return;
+		}
+
+		// Enable window and mouse input events.
+		DWORD customInputMode = ENABLE_WINDOW_INPUT | ENABLE_MOUSE_INPUT;
+		if (!SetConsoleMode(_rHnd, customInputMode))
+		{
+			std::cerr << "SetConsoleMode failed with error: " << GetLastError() << std::endl;
+			return;
+		}
+
 		// Set window title
-		SetConsoleTitle(TEXT("Win32 Console Control with WinTermLib!"));
+		std::basic_string<TCHAR> convertedTitle(windowTitle.begin(), windowTitle.end());
+		LPCTSTR lpTitle = convertedTitle.c_str();
+		SetConsoleTitle(lpTitle);
 
 		// Get initial csbi
 		updateBufferInfo();
@@ -101,11 +117,6 @@ namespace WinTermLib
 		WriteConsoleOutputA(_wHnd, _chiBuffer, _bufferDims, charPos, &writeArea);
 	}
 
-	HANDLE WinTerm::getFrameBuffer()
-	{
-		return _frameBuffer;
-	}
-
 	COORD WinTerm::getMaxWindowSize()
 	{
 		// First get the current Console Screen Buffer Info struct
@@ -115,7 +126,6 @@ namespace WinTermLib
 			return { -1,-1 };
 		}
 		return csbi.dwMaximumWindowSize;
-
 	}
 
 	/*
@@ -131,5 +141,27 @@ namespace WinTermLib
 		}
 		else
 			return TRUE;
+	}
+
+	DWORD WinTerm::getEventCount()
+	{
+		return GetNumberOfConsoleInputEvents(_rHnd, &_eventCount);
+	}
+
+	void WinTerm::fillEventBuffer()
+	{
+		/*
+			This method assumes _eventCount is NONZERO. The user should never
+			interface with this method directly, instead using the public getEventList()
+			method that will safely handle situations where there are no events.
+		*/
+
+		// Free existing event buffer and recreate it with the current _eventCount size
+		delete[] _eventBuffer;
+		_eventBuffer = new INPUT_RECORD[_eventCount];
+
+		// Read console input events from _rHnd into _eventBuffer
+		DWORD numEventsRead = 0;
+		ReadConsoleInput(_rHnd, _eventBuffer, _eventCount, &numEventsRead);
 	}
 }
